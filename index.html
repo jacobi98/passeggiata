@@ -64,7 +64,8 @@ let open=false,ps=0,snap=false,dirty=true,hover=null,latch=false,fc=0;
 const COL=['#ff3d71','#ff9f1c','#ffe66d','#2ee6a6','#3da5ff','#b06bff'];
 const MATL=['Gesso','Metallo','Vetro','Dicroica','Plastica','Satinato'];
 const NOTES=[261.6,293.7,329.6,392,440,523.3,587.3];
-const FY={cube:.11,column:.4,sphere:.14};
+const OS=1.6;
+const FY={cube:.11*OS,column:.4*OS,sphere:.14*OS};
 const PRESETS=[
   {n:'Originale',c:['#ff3d71','#ff9f1c','#ffe66d','#2ee6a6','#3da5ff','#b06bff']},
   {n:'Arcobaleno',c:['#ff3030','#ff9f1c','#ffe14d','#2ee65a','#3da5ff','#b06bff']},
@@ -106,7 +107,7 @@ function ping(f,v=.07){
 const skyMat=new THREE.ShaderMaterial({
   uniforms:{uA:{value:1}},side:THREE.BackSide,transparent:true,depthWrite:false,fog:false,
   vertexShader:'varying vec3 vP;void main(){vP=position;gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.);}',
-  fragmentShader:'uniform float uA;varying vec3 vP;void main(){vec3 d=normalize(vP);vec3 c=mix(vec3(.01,.01,.05),vec3(.08,.02,.15),d.y*.5+.5);vec3 g=floor(d*150.);float h=fract(sin(dot(g,vec3(12.9898,78.233,45.164)))*43758.5453);c+=step(.997,h)*vec3(.9,.95,1.);gl_FragColor=vec4(c,uA);}'
+  fragmentShader:'uniform float uA;varying vec3 vP;void main(){vec3 d=normalize(vP);vec3 c=mix(vec3(.01,.01,.05),vec3(.08,.02,.15),d.y*.5+.5);vec3 g=floor(d*150.);float h=fract(sin(dot(g,vec3(12.9898,78.233,45.164)))*43758.5453);c+=step(.997,h)*vec3(.9,.95,1.)*smoothstep(.02,.12,d.y);gl_FragColor=vec4(c,uA);}'
 });
 const sky=new THREE.Mesh(new THREE.SphereGeometry(40,32,16),skyMat);
 sky.renderOrder=-10;sky.frustumCulled=false;scene.add(sky);
@@ -203,9 +204,9 @@ function addOrb(pos,hex){
 }
 function addSolid(kind,pos,hex,mi=matIdx){
   const geo={
-    cube:()=>new THREE.BoxGeometry(.22,.22,.22),
-    sphere:()=>new THREE.SphereGeometry(.14,32,20),
-    column:()=>new THREE.CylinderGeometry(.07,.07,.8,32)
+    cube:()=>new THREE.BoxGeometry(.22*OS,.22*OS,.22*OS),
+    sphere:()=>new THREE.SphereGeometry(.14*OS,32,20),
+    column:()=>new THREE.CylinderGeometry(.07*OS,.07*OS,.8*OS,32)
   }[kind]();
   geo.computeBoundingSphere();
   const m=new THREE.Mesh(geo,makeMat(mi,hex));
@@ -501,8 +502,12 @@ renderer.setAnimationLoop(()=>{
     }
     const pulse=1+.12*Math.sin(t*3+u.ph);
     u.sp.scale.setScalar(.4*pulse*(.5+glow*.5)*(1+fog*1.8));
-    u.sp.material.opacity=Math.min(1,.2+.55*glow)*(1-.25*fog);
-    if(idx%step===0&&li<NL){const l=lights[li++];l.position.copy(o.position);l.color.copy(u.c);l.intensity=glow*3}
+    u.sp.material.opacity=Math.min(1,.2+.55*glow)*(1-.25*fog)*Math.min(1,Math.max(0,(o.position.distanceTo(camPos)-.15)/.45));
+    if(idx%step===0&&li<NL){const l=lights[li++];l.position.copy(o.position);l.color.copy(u.c);
+      let dm=9;
+      for(const it of items){if(it.userData.kind==='orb')continue;const d=Math.max(o.position.distanceTo(it.position)-it.userData.r,.02);if(d<dm)dm=d}
+      const k=Math.min(1,(dm/.9)*(dm/.9));
+      l.intensity=glow*3*k}
   });
   for(;li<NL;li++)lights[li].intensity=0;
 
