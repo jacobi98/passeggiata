@@ -47,7 +47,7 @@ const scene=new THREE.Scene();
 scene.fog=new THREE.FogExp2(0x141a3a,0);
 const camera=new THREE.PerspectiveCamera(70,innerWidth/innerHeight,.02,100);
 scene.add(new THREE.HemisphereLight(0xbfd2ff,0x202040,.3));
-const NL=6;
+const NL=4;
 const lights=[...Array(NL)].map(()=>{const l=new THREE.PointLight(0xffffff,0,4,2);scene.add(l);return l});
 
 let vr=.4,glow=1,fog=0,isAR=false,mode='move',colorIdx=4,matIdx=1,tab=0;
@@ -55,7 +55,7 @@ let open=false,ps=0,snap=false,dirty=true,hover=null,latch=false,fc=0;
 const COL=['#ff3d71','#ff9f1c','#ffe66d','#2ee6a6','#3da5ff','#b06bff'];
 const MATL=['Gesso','Metallo','Vetro','Dicroica','Plastica','Satinato'];
 const NOTES=[261.6,293.7,329.6,392,440,523.3,587.3];
-const FY={cube:.11,column:.4,pyramid:.16,torus:.18,sphere:.14};
+const FY={cube:.11,column:.4,sphere:.14};
 
 /* ---------- audio ---------- */
 let ac=null;
@@ -120,10 +120,19 @@ function applyBounds(rs,repopulate){
 /* ---------- riflessi dinamici (le sfere si specchiano sui materiali) ---------- */
 const cubeRT=new THREE.WebGLCubeRenderTarget(128,{type:THREE.HalfFloatType});
 const cubeCam=new THREE.CubeCamera(.05,60,cubeRT);scene.add(cubeCam);
+let envFace=0,envOn=true;
 function updateEnv(){
-  const a=skyMat.uniforms.uA.value,pv=panel.visible;
-  skyMat.uniforms.uA.value=1;panel.visible=false;hands.forEach(h=>h.visible=false);
-  cubeCam.position.set(cx,1.1,cz);cubeCam.update(renderer,scene);
+  if(!envOn)return;
+  const a=skyMat.uniforms.uA.value,pv=panel.visible,xe=renderer.xr.enabled,rt=renderer.getRenderTarget();
+  try{
+    skyMat.uniforms.uA.value=1;panel.visible=false;hands.forEach(h=>h.visible=false);
+    cubeCam.position.set(cx,1.1,cz);cubeCam.updateMatrixWorld(true);
+    renderer.xr.enabled=false;
+    renderer.setRenderTarget(cubeRT,envFace);
+    renderer.render(scene,cubeCam.children[envFace]);
+    envFace=(envFace+1)%6;
+  }catch(e){envOn=false}
+  renderer.setRenderTarget(rt);renderer.xr.enabled=xe;
   skyMat.uniforms.uA.value=a;panel.visible=pv;hands.forEach(h=>h.visible=true);
 }
 
@@ -133,8 +142,8 @@ function makeMat(i,hex){
   switch(i){
     case 0:return new THREE.MeshStandardMaterial({color:c.clone().lerp(w,.35),roughness:1});
     case 1:return new THREE.MeshStandardMaterial({color:c,metalness:1,roughness:.06,envMap:env,envMapIntensity:1.4});
-    case 2:return new THREE.MeshPhysicalMaterial({color:c.clone().lerp(w,.7),roughness:.02,transparent:true,opacity:.3,envMap:env,envMapIntensity:1.8,clearcoat:1,side:THREE.DoubleSide});
-    case 3:return new THREE.MeshPhysicalMaterial({color:0xffffff,metalness:.25,roughness:.04,iridescence:1,iridescenceIOR:2.2,iridescenceThicknessRange:[250,1000],transparent:true,opacity:.8,envMap:env,envMapIntensity:2,side:THREE.DoubleSide});
+    case 2:return new THREE.MeshPhysicalMaterial({color:c.clone().lerp(w,.7),roughness:.02,transparent:true,opacity:.3,envMap:env,envMapIntensity:1.8,clearcoat:1});
+    case 3:return new THREE.MeshPhysicalMaterial({color:0xffffff,metalness:.25,roughness:.04,iridescence:1,iridescenceIOR:2.2,iridescenceThicknessRange:[250,1000],transparent:true,opacity:.8,envMap:env,envMapIntensity:2});
     case 4:return new THREE.MeshPhysicalMaterial({color:c,roughness:.3,clearcoat:1,clearcoatRoughness:.04,envMap:env,envMapIntensity:.8});
     default:return new THREE.MeshStandardMaterial({color:c,metalness:.5,roughness:.4});
   }
@@ -162,21 +171,18 @@ function addSolid(kind,pos,hex,mi=matIdx){
   const geo={
     cube:()=>new THREE.BoxGeometry(.22,.22,.22),
     sphere:()=>new THREE.SphereGeometry(.14,32,20),
-    column:()=>new THREE.CylinderGeometry(.07,.07,.8,32),
-    pyramid:()=>new THREE.ConeGeometry(.17,.32,4),
-    torus:()=>new THREE.TorusGeometry(.13,.045,20,48)
+    column:()=>new THREE.CylinderGeometry(.07,.07,.8,32)
   }[kind]();
   geo.computeBoundingSphere();
   const m=new THREE.Mesh(geo,makeMat(mi,hex));
-  if(kind==='torus')m.rotation.x=Math.PI/2;
   m.position.copy(pos);m.userData={kind,r:geo.boundingSphere.radius,held:false,mat:mi,hex};
   scene.add(m);items.push(m);return m;
 }
 function populate(){
   items.splice(0).forEach(o=>scene.remove(o));
   for(let i=0;i<6;i++){const a=i/6*Math.PI*2;addOrb(new THREE.Vector3(cx+Math.cos(a)*RI*.6,1.1+.25*Math.sin(i*2),cz+Math.sin(a)*RI*.6),COL[i]);}
-  [['cube',1,'#ff9f1c'],['sphere',2,'#bfe6ff'],['pyramid',3,'#ffffff'],['column',0,'#3da5ff'],['torus',4,'#ff3d71']]
-   .forEach(([k,m,h],i)=>{const a=(i+.5)/5*Math.PI*2;addSolid(k,new THREE.Vector3(cx+Math.cos(a)*RI*.8,FY[k],cz+Math.sin(a)*RI*.8),h,m)});
+  [['cube',1,'#ff9f1c'],['sphere',3,'#ffffff'],['column',2,'#bfe6ff'],['cube',4,'#ff3d71']]
+   .forEach(([k,m,h],i)=>{const a=(i+.5)/4*Math.PI*2;addSolid(k,new THREE.Vector3(cx+Math.cos(a)*RI*.8,FY[k],cz+Math.sin(a)*RI*.8),h,m)});
   $('n').value=6;$('nv').textContent=6;dirty=true;
 }
 function setOrbCount(n){
@@ -207,7 +213,7 @@ const EL=[
   {id:'nm',t:'b',tab:0,x:300,y:392,w:90,h:60,l:'−'},
   {id:'np',t:'b',tab:0,x:490,y:392,w:90,h:60,l:'+'},
   ...COL.map((c,i)=>({id:'c'+i,t:'c',tab:0,i,x:40+i*96,y:520,w:80,h:56})),
-  ...['sphere','cube','column','pyramid','torus','reset'].map((id,i)=>({id,t:'b',tab:1,x:col3[i%3],y:140+Math.floor(i/3)*76,w:176,h:64,l:['Sfera','Cubo','Colonna','Piramide','Toro','Reset'][i]})),
+  ...['sphere','cube','column','reset'].map((id,i)=>({id,t:'b',tab:1,x:col3[i%3],y:140+Math.floor(i/3)*76,w:176,h:64,l:['Sfera','Cubo','Colonna','Reset'][i]})),
   ...MATL.map((l,i)=>({id:'m'+i,t:'x',tab:1,i,l,x:col3[i%3],y:334+Math.floor(i/3)*76,w:176,h:64})),
   ...[['move','Sposta'],['mat','Materiale'],['del','Cancella']].map(([id,l],i)=>({id,t:'m',tab:1,x:col3[i],y:524,w:176,h:64,l}))
 ];
@@ -326,6 +332,14 @@ const clock=new THREE.Clock(),camPos=new THREE.Vector3(),camDir=new THREE.Vector
 let lastWrist=null;
 
 buildFloor(DEF);populate();
+{
+  const go=$('go');go.disabled=true;go.textContent='Preparo la scena…';
+  const tmp=MATL.map((_,i)=>{const m=new THREE.Mesh(sphG,makeMat(i,'#ffffff'));m.position.set(0,-30,0);scene.add(m);return m});
+  const c=renderer.compileAsync?renderer.compileAsync(scene,camera):Promise.resolve(renderer.compile(scene,camera));
+  Promise.race([c,new Promise(r=>setTimeout(r,8000))]).catch(()=>{}).then(()=>{
+    tmp.forEach(m=>scene.remove(m));go.disabled=false;go.textContent='Entra in VR / passthrough';
+  });
+}
 
 renderer.setAnimationLoop(()=>{
   const dt=Math.min(clock.getDelta(),.05)||.014,t=clock.elapsedTime;
@@ -416,7 +430,7 @@ renderer.setAnimationLoop(()=>{
   });
   for(;li<NL;li++)lights[li].intensity=0;
 
-  if(fc++%4===0)updateEnv();
+  updateEnv();
   renderer.render(scene,camera);
 });
 
@@ -434,6 +448,7 @@ $('go').onclick=async()=>{
     try{const r=await s.requestReferenceSpace('bounded-floor');if(r.boundsGeometry&&r.boundsGeometry.length>=3)rt='bounded-floor'}catch(e){}
     renderer.xr.setReferenceSpaceType(rt);
     await renderer.xr.setSession(s);
+    renderer.xr.setFoveation(1);
     const rs=renderer.xr.getReferenceSpace();
     applyBounds(rs,true);
     if(rs)rs.onreset=()=>applyBounds(renderer.xr.getReferenceSpace(),false);
