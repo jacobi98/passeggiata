@@ -15,6 +15,9 @@ button:focus-visible,input:focus-visible{outline:2px solid #fff;outline-offset:2
 label{display:block;font-size:12.5px;margin-top:10px;color:#dfe6ff}
 input[type=range]{width:100%}
 #msg{color:#ff8fa8}
+#ui{max-height:calc(100% - 64px);overflow-y:auto}
+select{width:100%;padding:9px;margin-top:4px;border-radius:8px;background:#1b2150;color:#e8ecff;border:1px solid #2b3366;font-size:14px}
+button.sec{background:#1d2552;border:1px solid #2b3366;margin-top:12px;padding:10px;font-size:13.5px}
 </style>
 </head>
 <body>
@@ -27,6 +30,11 @@ input[type=range]{width:100%}
   <input id="n" type="range" min="1" max="24" value="6">
   <label for="fog">Nebbia</label>
   <input id="fog" type="range" min="0" max="100" value="0">
+  <label for="pcSel">Preset colori luci</label>
+  <select id="pcSel"></select>
+  <label for="mvSel">Movimento luci</label>
+  <select id="mvSel"></select>
+  <button id="floorBtn" class="sec">Nascondi pavimento</button>
   <p>Guarda la mano sinistra e fai doppio pizzico pollice-medio per aprire o chiudere la palette. Pizzica pollice-indice per afferrare e spostare. Un colpo veloce con l'indice lancia le sfere. Tocca i pulsanti con l'indice destro.</p>
   <p id="msg"></p>
 </div>
@@ -51,11 +59,37 @@ const NL=4;
 const lights=[...Array(NL)].map(()=>{const l=new THREE.PointLight(0xffffff,0,4,2);scene.add(l);return l});
 
 let vr=.4,glow=1,fog=0,isAR=false,mode='move',colorIdx=4,matIdx=1,tab=0;
+let cpIdx=0,mvIdx=0,floorOn=true;
 let open=false,ps=0,snap=false,dirty=true,hover=null,latch=false,fc=0;
 const COL=['#ff3d71','#ff9f1c','#ffe66d','#2ee6a6','#3da5ff','#b06bff'];
 const MATL=['Gesso','Metallo','Vetro','Dicroica','Plastica','Satinato'];
 const NOTES=[261.6,293.7,329.6,392,440,523.3,587.3];
 const FY={cube:.11,column:.4,sphere:.14};
+const PRESETS=[
+  {n:'Originale',c:['#ff3d71','#ff9f1c','#ffe66d','#2ee6a6','#3da5ff','#b06bff']},
+  {n:'Arcobaleno',c:['#ff3030','#ff9f1c','#ffe14d','#2ee65a','#3da5ff','#b06bff']},
+  {n:'Fuoco',c:['#ff1a1a','#ff4d00','#ff8000','#ffb300','#ffd54a','#fff0a8']},
+  {n:'Oceano',c:['#0033ff','#0072ff','#00b4ff','#00e5ff','#2effc4','#7aa8ff']},
+  {n:'Neon',c:['#ff00e5','#00fff0','#c6ff00','#ff2a6d','#7d5cff','#05ffa1']},
+  {n:'Pastello',c:['#ffb3c7','#ffd6a5','#fdffb6','#caffbf','#9bf6ff','#cdb4ff']},
+  {n:'Tramonto',c:['#ff4e50','#fc913a','#f9d423','#ff6f91','#c34a9b','#6a3fa0']},
+  {n:'Foresta',c:['#0b8f3c','#2ee66a','#9be564','#d4e157','#00a896','#7bdcb5']},
+  {n:'Ghiaccio',c:['#e0f7ff','#a8e6ff','#6fc7ff','#b9a8ff','#ffffff','#8ad1e8']}
+];
+const MOVES=['Libero','Orbita','Onda','Spirale','Respiro','Infinito','Caos','Ferme'];
+const TG=new THREE.Vector3();
+function moveTarget(i,n,t,out){
+  const a=i/n*Math.PI*2,R=RI*.6,TP=Math.PI*2;
+  let ang,r,u;
+  switch(mvIdx){
+    case 1:ang=a+t*.45;out.set(cx+Math.cos(ang)*R,1.1+.25*Math.sin(i*2),cz+Math.sin(ang)*R);break;
+    case 2:ang=a+t*.1;out.set(cx+Math.cos(ang)*R,1.2+.5*Math.sin(t*1.6+a*3),cz+Math.sin(ang)*R);break;
+    case 3:{const f=(i/n+t*.04)%1,q=1-Math.abs(2*f-1);ang=q*TP*3+t*.5;r=R*(.25+.75*q);out.set(cx+Math.cos(ang)*r,.3+q*1.8,cz+Math.sin(ang)*r);break}
+    case 4:r=R*(.3+.6*(.5+.5*Math.sin(t*1.1)));ang=a+t*.1;out.set(cx+Math.cos(ang)*r,1.15+.2*Math.sin(i*2+t),cz+Math.sin(ang)*r);break;
+    case 5:u=t*.5+a;out.set(cx+R*1.2*Math.sin(u),1.1+.3*Math.sin(u*2+i),cz+R*1.2*Math.sin(u)*Math.cos(u));break;
+  }
+  return out;
+}
 
 /* ---------- audio ---------- */
 let ac=null;
@@ -109,7 +143,7 @@ function buildFloor(pts){
   const mesh=new THREE.Mesh(new THREE.ShapeGeometry(new THREE.Shape(pts.map(p=>new THREE.Vector2(p[0],-p[1])))),floorMat);
   mesh.rotation.x=-Math.PI/2;
   const line=new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints(pts.map(p=>new THREE.Vector3(p[0],.01,p[1]))),lineMat);
-  floorGroup=new THREE.Group();floorGroup.add(mesh,line);scene.add(floorGroup);
+  floorGroup=new THREE.Group();floorGroup.add(mesh,line);floorGroup.visible=floorOn;scene.add(floorGroup);
 }
 function applyBounds(rs,repopulate){
   const g=rs&&rs.boundsGeometry;
@@ -205,8 +239,9 @@ panel.visible=false;scene.add(panel);
 
 const col3=[40,232,424];
 const EL=[
-  {id:'tab0',t:'m',x:40,y:26,w:270,h:56,l:'Ambiente'},
-  {id:'tab1',t:'m',x:330,y:26,w:270,h:56,l:'Oggetti'},
+  {id:'tab0',t:'m',x:40,y:26,w:176,h:56,l:'Ambiente'},
+  {id:'tab1',t:'m',x:232,y:26,w:176,h:56,l:'Oggetti'},
+  {id:'tab2',t:'m',x:424,y:26,w:176,h:56,l:'Luci'},
   {id:'vr',t:'s',tab:0,x:40,y:140,w:560,h:34,l:'Passthrough ⇄ VR'},
   {id:'gl',t:'s',tab:0,x:40,y:224,w:560,h:34,l:'Luminosità sfere'},
   {id:'fg',t:'s',tab:0,x:40,y:308,w:560,h:34,l:'Nebbia'},
@@ -215,7 +250,10 @@ const EL=[
   ...COL.map((c,i)=>({id:'c'+i,t:'c',tab:0,i,x:40+i*96,y:520,w:80,h:56})),
   ...['sphere','cube','column','reset'].map((id,i)=>({id,t:'b',tab:1,x:col3[i%3],y:140+Math.floor(i/3)*76,w:176,h:64,l:['Sfera','Cubo','Colonna','Reset'][i]})),
   ...MATL.map((l,i)=>({id:'m'+i,t:'x',tab:1,i,l,x:col3[i%3],y:334+Math.floor(i/3)*76,w:176,h:64})),
-  ...[['move','Sposta'],['mat','Materiale'],['del','Cancella']].map(([id,l],i)=>({id,t:'m',tab:1,x:col3[i],y:524,w:176,h:64,l}))
+  ...[['move','Sposta'],['mat','Materiale'],['del','Cancella']].map(([id,l],i)=>({id,t:'m',tab:1,x:col3[i],y:524,w:176,h:64,l})),
+  ...PRESETS.map((q,i)=>({id:'pc'+i,t:'p',tab:2,i,l:q.n,x:col3[i%3],y:138+Math.floor(i/3)*58,w:176,h:50})),
+  ...MOVES.map((l,i)=>({id:'mv'+i,t:'v',tab:2,i,l,x:col3[i%3],y:346+Math.floor(i/3)*58,w:176,h:50})),
+  {id:'fl',t:'f',tab:2,x:40,y:534,w:560,h:62,l:''}
 ];
 const vis=()=>EL.filter(e=>e.tab===undefined||e.tab===tab);
 
@@ -228,8 +266,10 @@ function drawPanel(){
     x.font='600 26px system-ui,sans-serif';x.fillText('Punti luce',40,436);
     x.font='600 22px system-ui,sans-serif';x.fillText('Colore',40,506);
     x.fillStyle='#fff';x.textAlign='center';x.font='700 34px system-ui,sans-serif';x.fillText(orbs().length,440,436);
-  }else{
+  }else if(tab===1){
     x.fillText('Forma',40,128);x.fillText('Materiale',40,322);x.fillText('Modo',40,512);
+  }else{
+    x.fillText('Colori luci',40,126);x.fillText('Movimento',40,334);
   }
   for(const e of vis()){
     const hv=e===hover;
@@ -245,12 +285,19 @@ function drawPanel(){
     }else if(e.t==='c'){
       x.fillStyle=COL[e.i];x.beginPath();x.roundRect(e.x,e.y,e.w,e.h,14);x.fill();
       if(e.i===colorIdx||hv){x.lineWidth=5;x.strokeStyle='#fff';x.stroke();}
+    }else if(e.t==='p'){
+      const on=e.i===cpIdx;
+      x.fillStyle=on?'#4f5fe0':(hv?'#2c3a8c':'#1d2552');
+      x.beginPath();x.roundRect(e.x,e.y,e.w,e.h,16);x.fill();
+      x.fillStyle='#fff';x.font='700 21px system-ui,sans-serif';x.textAlign='center';
+      x.fillText(e.l,e.x+e.w/2,e.y+22);
+      PRESETS[e.i].c.forEach((h,k)=>{x.fillStyle=h;x.beginPath();x.roundRect(e.x+12+k*27,e.y+31,23,11,5);x.fill()});
     }else{
-      const on=(e.t==='x'&&e.i===matIdx)||e.id===mode||e.id==='tab'+tab;
+      const on=(e.t==='x'&&e.i===matIdx)||(e.t==='v'&&e.i===mvIdx)||(e.t==='f'&&floorOn)||e.id===mode||e.id==='tab'+tab;
       x.fillStyle=on?(e.id==='del'?'#e0365f':'#4f5fe0'):(hv?'#2c3a8c':'#1d2552');
       x.beginPath();x.roundRect(e.x,e.y,e.w,e.h,18);x.fill();
       x.fillStyle='#fff';x.font='700 26px system-ui,sans-serif';x.textAlign='center';
-      x.fillText(e.l,e.x+e.w/2,e.y+e.h/2+9);
+      x.fillText(e.t==='f'?'Pavimento: '+(floorOn?'visibile':'nascosto'):e.l,e.x+e.w/2,e.y+e.h/2+9);
     }
   }
   ptex.needsUpdate=true;
@@ -264,9 +311,12 @@ function setSlider(e,f){
 function act(e,cp){
   ping(660,.05);
   const id=e.id;
-  if(id==='tab0'||id==='tab1'){tab=+id[3];hover=null}
+  if(id==='tab0'||id==='tab1'||id==='tab2'){tab=+id[3];hover=null}
   else if(e.t==='c')colorIdx=e.i;
   else if(e.t==='x')matIdx=e.i;
+  else if(e.t==='p')applyColorPreset(e.i);
+  else if(e.t==='v')setMove(e.i);
+  else if(id==='fl')toggleFloor();
   else if(id==='move'||id==='mat'||id==='del')mode=id;
   else if(id==='nm')setOrbCount(orbs().length-1);
   else if(id==='np')setOrbCount(orbs().length+1);
@@ -294,6 +344,28 @@ function pokeUpdate(tip,cp){
 $('vr').oninput=e=>{vr=e.target.value/100;dirty=true};
 $('fog').oninput=e=>{fog=e.target.value/100;dirty=true};
 $('n').oninput=e=>setOrbCount(+e.target.value);
+function tint(o,hex){
+  const u=o.userData;u.c.set(hex);u.sp.material.color.copy(u.c);
+  u.core.material.color.copy(u.c).lerp(new THREE.Color(1,1,1),.5);
+}
+function applyColorPreset(i){
+  cpIdx=i;PRESETS[i].c.forEach((h,k)=>{COL[k]=h});
+  orbs().forEach((o,k)=>tint(o,COL[k%COL.length]));
+  $('pcSel').value=i;dirty=true;
+}
+function setMove(i){
+  mvIdx=i;orbs().forEach(o=>o.userData.v.set(0,0,0));
+  $('mvSel').value=i;dirty=true;
+}
+function toggleFloor(){
+  floorOn=!floorOn;if(floorGroup)floorGroup.visible=floorOn;
+  $('floorBtn').textContent=floorOn?'Nascondi pavimento':'Mostra pavimento';dirty=true;
+}
+PRESETS.forEach((q,i)=>$('pcSel').add(new Option(q.n,i)));
+MOVES.forEach((l,i)=>$('mvSel').add(new Option(l,i)));
+$('pcSel').onchange=e=>applyColorPreset(+e.target.value);
+$('mvSel').onchange=e=>setMove(+e.target.value);
+$('floorBtn').onclick=toggleFloor;
 
 /* ---------- mani ---------- */
 const hands=[0,1].map(i=>{
@@ -409,17 +481,21 @@ renderer.setAnimationLoop(()=>{
   os.forEach((o,idx)=>{
     const u=o.userData;u.cool-=dt;u.ph+=dt;
     if(!u.held){
-      u.v.x+=Math.sin(u.ph*.7+u.note)*.05*dt;
-      u.v.y+=Math.cos(u.ph*.9+u.note)*.04*dt;
-      u.v.z+=Math.sin(u.ph*.5+u.note*2)*.05*dt;
+      if(mvIdx===0||mvIdx===6){
+        const am=mvIdx===6?10:1;
+        u.v.x+=Math.sin(u.ph*.7+u.note)*.05*am*dt;
+        u.v.y+=Math.cos(u.ph*.9+u.note)*.04*am*dt;
+        u.v.z+=Math.sin(u.ph*.5+u.note*2)*.05*am*dt;
+      }
       for(const f of fingers){
         if(f.sp>.5&&u.cool<=0&&o.position.distanceTo(f.p)<.1){
           u.v.copy(f.vel).multiplyScalar(.9).clampLength(0,4);
           ping(NOTES[u.note]);u.cool=.3;
         }
       }
-      u.v.multiplyScalar(Math.exp(-.9*dt));
+      u.v.multiplyScalar(Math.exp(-(mvIdx===7?3:.9)*dt));
       o.position.addScaledVector(u.v,dt);
+      if(mvIdx>=1&&mvIdx<=5)o.position.lerp(moveTarget(idx,n,t,TG),1-Math.exp(-3*dt));
       const p=o.position;p.y=Math.min(2.6,Math.max(.15,p.y));
       if(!inside(p.x,p.z)){p.x+=(cx-p.x)*.05;p.z+=(cz-p.z)*.05;u.v.multiplyScalar(.5)}
     }
