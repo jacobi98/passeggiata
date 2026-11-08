@@ -37,7 +37,8 @@ button.sec{background:#1d2552;border:1px solid #2b3366;margin-top:12px;padding:1
   <label for="skySel">Cielo / ambiente</label>
   <select id="skySel"><option value="0">Cielo stellato</option><option value="1">Foresta (point cloud)</option></select>
   <label for="fdSel">Densità foresta</label>
-  <select id="fdSel"><option value="1">Normale</option><option value="2" selected>Alta</option><option value="3">Altissima</option></select>
+  <select id="fdSel"><option value="1">Normale</option><option value="2" selected>Alta</option><option value="3">Altissima</option><option value="4">Massima</option></select>
+  <button id="newBtn" class="sec">Nuova foresta</button>
   <button id="floorBtn" class="sec">Nascondi pavimento</button>
   <p>Guarda la mano sinistra e fai doppio pizzico pollice-medio per aprire o chiudere la palette. Pizzica pollice-indice per afferrare e spostare. Un colpo veloce con l'indice lancia le sfere. Tocca i pulsanti con l'indice destro.</p>
   <p id="msg"></p>
@@ -157,7 +158,7 @@ function applyBounds(rs,repopulate){
 }
 
 /* ---------- foresta point cloud ---------- */
-let forest=null,forestDirty=true,skyIdx=0,forestD=2;
+let forest=null,forestDirty=true,skyIdx=0,forestD=2,forestSeed=7;
 const FL=Array.from({length:24},()=>new THREE.Vector4()),FC=Array.from({length:24},()=>new THREE.Vector3());
 const forestMat=new THREE.ShaderMaterial({
   uniforms:{uA:skyMat.uniforms.uA,uL:{value:FL},uLC:{value:FC},uN:{value:0},uT:{value:0},uF:{value:.035}},
@@ -170,7 +171,7 @@ void main(){
     vec3 d=uL[i].xyz-wp.xyz;float q=dot(d,d),a=uL[i].w/(1.+q*1.2);lit+=uLC[i]*a;g+=a;
     em+=uLC[i]*exp(-q*6.)*uL[i].w;
     vec3 o=-d/(sqrt(q)+.01);push+=(o+cross(vec3(0.,1.,0.),o)*.8)*exp(-q*2.5)*uL[i].w*.1;}
-  float sw=step(sz,.0125)*min(position.y,.6)*.12+step(.03,sz)*.03;
+  float sw=step(sz,.017)*min(position.y,.6)*.12+step(.036,sz)*.03;
   wp.xyz+=push+vec3(sin(uT*1.3+wp.z*1.7+wp.y),0.,cos(uT*1.1+wp.x*1.5+wp.y))*sw;
   vC=col*(vec3(.05,.07,.12)+lit*4.)+em*.7;
   vec4 mv=viewMatrix*wp;vD=length(mv.xyz);
@@ -184,31 +185,36 @@ void main(){
 });
 function buildForest(){
   if(forest){scene.remove(forest);forest.geometry.dispose()}
-  let sd=7;const R=()=>{sd=(sd*16807)%2147483647;return sd/2147483647};
-  const D=forestD,P=[],C=[],S=[],MX=15,RR=Math.max(RI+1.2,3.4);
+  let sd=forestSeed;const R=()=>{sd=(sd*16807)%2147483647;return sd/2147483647};
+  const D=forestD,P=[],C=[],S=[];
+  let Rb=1;B.forEach(q=>{Rb=Math.max(Rb,Math.hypot(q[0]-cx,q[1]-cz))});
+  const W=Rb+13,AR=(W/15)**2;
   const A=(x,y,z,r,g,b,z2)=>{P.push(x,y,z);C.push(r**2.2,g**2.2,b**2.2);S.push(z2)};
   const sm=(a,b,x)=>{x=Math.min(1,Math.max(0,(x-a)/(b-a)));return x*x*(3-2*x)};
-  const H=(x,z)=>(.35*Math.sin(x*.35)*Math.cos(z*.3)+.15*Math.sin(x*1.1+z*.8))*sm(2,5,Math.hypot(x,z));
-  const ring=(a,b)=>{const t=R()*6.283,r=Math.sqrt(a*a+R()*(b*b-a*a));return[Math.cos(t)*r,Math.sin(t)*r]};
-  /* terreno */
-  for(let i=0;i<16000*D;i++){const[x,z]=ring(0,MX),n=R(),b=Math.sin(x*.9+z*1.3)>.55;
-    b?A(x,H(x,z),z,.22+.1*n,.15+.07*n,.09,.022):A(x,H(x,z),z,.1+.1*n,.16+.18*n,.05+.04*n,.022)}
+  /* distanza con segno dal pavimento dell'utente (negativa dentro) */
+  const sdf=(x,z)=>{let m=1e9;for(let i=0;i<B.length;i++)m=Math.min(m,segD(x+cx,z+cz,B[i],B[(i+1)%B.length]));return inside(x+cx,z+cz)?-m:m};
+  const H=(x,z)=>(.35*Math.sin(x*.35)*Math.cos(z*.3)+.15*Math.sin(x*1.1+z*.8))*sm(-.2,2.5,sdf(x,z));
+  const put=(a,b,k)=>{for(let t=0;t<80;t++){const an=R()*6.283,r=W*Math.sqrt(R()),x=Math.cos(an)*r,z=Math.sin(an)*r,d=sdf(x,z);
+    if(d>=a&&d<=b&&(!k||R()<.2+.8*Math.exp(-Math.max(d,0)/k)))return[x,z]}return[W*2,W*2]};
+  /* terreno (piu' fitto vicino al pavimento) */
+  for(let i=0;i<14000*D*AR;i++){const[x,z]=put(-1e9,1e9,7),n=R(),b=Math.sin(x*.9+z*1.3)>.55;
+    b?A(x,H(x,z),z,.22+.1*n,.15+.07*n,.09,.03):A(x,H(x,z),z,.1+.1*n,.16+.18*n,.05+.04*n,.03)}
   /* foglie cadute */
-  for(let i=0;i<2500*D;i++){const[x,z]=ring(0,MX*.85),n=R();A(x,H(x,z)+.01,z,.55+.35*n,.25+.25*R(),.05,.02)}
+  for(let i=0;i<3500*D*AR;i++){const[x,z]=put(-.3,1e9,7),n=R();A(x,H(x,z)+.01,z,.55+.35*n,.25+.25*R(),.05,.028)}
   /* erba */
-  for(let i=0;i<4500*D;i++){const[x,z]=ring(R()<.3?0:1.2,MX*.8),h=.15+R()*.4,a=R()*6.283,bd=.1+R()*.2,t0=.5+R()*.5,y0=H(x,z);
-    for(let k=0;k<5;k++){const u=k/4;A(x+Math.cos(a)*bd*u*u*h,y0+u*h,z+Math.sin(a)*bd*u*u*h,.08+.25*u*t0,.25+.4*u*t0,.05+.08*u,.012)}}
+  for(let i=0;i<5000*D;i++){const[x,z]=put(-.5,13,5),h=.15+R()*.4,a=R()*6.283,bd=.1+R()*.2,t0=.5+R()*.5,y0=H(x,z);
+    for(let k=0;k<5;k++){const u=k/4;A(x+Math.cos(a)*bd*u*u*h,y0+u*h,z+Math.sin(a)*bd*u*u*h,.08+.25*u*t0,.25+.4*u*t0,.05+.08*u,.016)}}
   /* cespugli */
-  for(let i=0;i<14*D;i++){const[x,z]=ring(2.6,MX*.85),s=.4+R()*.5,y0=H(x,z);
-    for(let k=0;k<260*D;k++){const a=R()*6.283,rr=s*Math.sqrt(R());A(x+Math.cos(a)*rr,y0+.05+Math.sqrt(R())*s*.9,z+Math.sin(a)*rr,.05,.2+.25*R(),.06,.022)}}
+  for(let i=0;i<14*D;i++){const[x,z]=put(.8,12),s=.4+R()*.5,y0=H(x,z);
+    for(let k=0;k<260*D;k++){const a=R()*6.283,rr=s*Math.sqrt(R());A(x+Math.cos(a)*rr,y0+.05+Math.sqrt(R())*s*.9,z+Math.sin(a)*rr,.05,.2+.25*R(),.06,.03)}}
   /* alberi */
   for(let i=0;i<14*D;i++){
-    const[x,z]=ring(RR,MX),h=4.5+R()*4.5,r0=.12+R()*.14,y0=H(x,z),lx=(R()-.5)*.6,lz=(R()-.5)*.6,aut=R()<.14;
+    const[x,z]=put(1,13),h=4.5+R()*4.5,r0=.12+R()*.14,y0=H(x,z),lx=(R()-.5)*.6,lz=(R()-.5)*.6,aut=R()<.14;
     const lf=()=>aut?[.75+.2*R(),.35+.25*R(),.06]:[.08+.1*R(),.3+.25*R(),.06+.06*R()];
-    const bark=(px,py,pz,a)=>{const d=Math.sin(a*8)>.5?.7:1;A(px,py,pz,(.22+.12*R())*d,(.15+.08*R())*d,(.1+.05*R())*d,.026)};
+    const bark=(px,py,pz,a)=>{const d=Math.sin(a*8)>.5?.7:1;A(px,py,pz,(.22+.12*R())*d,(.15+.08*R())*d,(.1+.05*R())*d,.03)};
     const T=y=>[x+lx*y/h*.5,z+lz*y/h*.5];
     for(let k=0;k<600*D;k++){const y=R()*h,a=R()*6.283,r=r0*(1-.65*y/h)*(1+.25*Math.sin(y*7+i))*(1+.8*Math.exp(-y*3)),[tx,tz]=T(y);bark(tx+Math.cos(a)*r,y0+y,tz+Math.sin(a)*r,a)}
-    const cloud=(cx0,cy0,cz0,rad,n)=>{for(let k=0;k<n;k++){const u=Math.acos(2*R()-1),v=R()*6.283,rr=rad*Math.cbrt(R()),c=lf();A(cx0+Math.sin(u)*Math.cos(v)*rr,cy0+Math.cos(u)*rr*.7,cz0+Math.sin(u)*Math.sin(v)*rr,c[0],c[1],c[2],.035)}};
+    const cloud=(cx0,cy0,cz0,rad,n)=>{for(let k=0;k<n;k++){const u=Math.acos(2*R()-1),v=R()*6.283,rr=rad*Math.cbrt(R()),c=lf();A(cx0+Math.sin(u)*Math.cos(v)*rr,cy0+Math.cos(u)*rr*.7,cz0+Math.sin(u)*Math.sin(v)*rr,c[0],c[1],c[2],.04)}};
     const nb=5+Math.floor(R()*4);
     for(let b=0;b<nb;b++){
       const sy=h*(.4+.5*R()),ba=R()*6.283,L=1+R()*1.8,[bx,bz]=T(sy);
@@ -216,34 +222,38 @@ function buildForest(){
       cloud(bx+Math.cos(ba)*L,y0+sy+L*.45,bz+Math.sin(ba)*L,.6+R()*.5,170*D)}
     const[tx,tz]=T(h);cloud(tx,y0+h,tz,1.3,260*D)}
   /* rocce */
-  for(let i=0;i<10*D;i++){const[x,z]=ring(1.8,MX*.85),s=.2+R()*R()*.9,y0=H(x,z),sy=.45+R()*.35,ph=R()*9;
+  for(let i=0;i<10*D;i++){const[x,z]=put(.5,12),s=.2+R()*R()*.9,y0=H(x,z),sy=.45+R()*.35,ph=R()*9;
     for(let k=0;k<380*D;k++){const u=Math.acos(2*R()-1),v=R()*6.283,rd=s*(1+.25*Math.sin(u*3+ph)*Math.cos(v*2+ph)+.08*(R()-.5)),yy=Math.cos(u)*rd*sy;
       if(yy<-.02*s)continue;
       const g=.28+.18*R(),mo=sm(.5,.9,yy/(s*sy+1e-3))*(.5+R()*.5);
-      A(x+Math.sin(u)*Math.cos(v)*rd,y0+yy,z+Math.sin(u)*Math.sin(v)*rd,g*(1-mo*.5),g*(1-mo*.1)+.04*mo,g*(1-mo*.55),.026)}}
+      A(x+Math.sin(u)*Math.cos(v)*rd,y0+yy,z+Math.sin(u)*Math.sin(v)*rd,g*(1-mo*.5),g*(1-mo*.1)+.04*mo,g*(1-mo*.55),.03)}}
   /* fiori */
   const FCL=[[.95,.95,.9],[1,.85,.15],[.95,.35,.55],[.6,.4,.95],[.95,.25,.2],[.4,.6,1]];
-  for(let i=0;i<7*D;i++){const[px,pz]=ring(1.5,MX*.7),f=FCL[i%6];
-    for(let j=0;j<14;j++){const a=R()*6.283,rr=R()*.9,x=px+Math.cos(a)*rr,z=pz+Math.sin(a)*rr,y0=H(x,z),h=.18+R()*.28;
-      for(let k=0;k<4;k++)A(x,y0+h*k/3,z,.1,.4,.1,.014);
-      for(let k=0;k<14;k++){const q=k/14*6.283,rp=.04+.015*(k%2);A(x+Math.cos(q)*rp,y0+h+.005*(k%2),z+Math.sin(q)*rp,f[0],f[1],f[2],.022)}
-      A(x,y0+h+.01,z,1,.85,.2,.02)}}
+  for(let i=0;i<7*D;i++){const[px,pz]=put(.4,11,8),f=FCL[i%6];
+    for(let j=0;j<22;j++){const a=R()*6.283,rr=R()*.9,x=px+Math.cos(a)*rr,z=pz+Math.sin(a)*rr,y0=H(x,z),h=.18+R()*.28;
+      for(let k=0;k<4;k++)A(x,y0+h*k/3,z,.1,.4,.1,.018);
+      for(let k=0;k<14;k++){const q=k/14*6.283,rp=.04+.015*(k%2);A(x+Math.cos(q)*rp,y0+h+.005*(k%2),z+Math.sin(q)*rp,f[0],f[1],f[2],.026)}
+      A(x,y0+h+.01,z,1,.85,.2,.024)}}
   /* funghi */
-  for(let i=0;i<9*D;i++){const[x,z]=ring(1.6,MX*.7),y0=H(x,z),s=.04+R()*.05,m=i%2;
-    for(let k=0;k<18;k++){const a=R()*6.283,u=Math.acos(R()),rc=s*1.5;A(x+Math.cos(a)*Math.sin(u)*rc,y0+s*2+Math.cos(u)*rc*.6,z+Math.sin(a)*Math.sin(u)*rc,.8,.2+.5*m,.15+.5*m,.016)}
-    for(let k=0;k<5;k++)A(x,y0+s*.4*k,z,.9,.88,.8,.014)}
+  for(let i=0;i<9*D;i++){const[x,z]=put(.3,10),y0=H(x,z),s=.04+R()*.05,m=i%2;
+    for(let k=0;k<18;k++){const a=R()*6.283,u=Math.acos(R()),rc=s*1.5;A(x+Math.cos(a)*Math.sin(u)*rc,y0+s*2+Math.cos(u)*rc*.6,z+Math.sin(a)*Math.sin(u)*rc,.8,.2+.5*m,.15+.5*m,.02)}
+    for(let k=0;k<5;k++)A(x,y0+s*.4*k,z,.9,.88,.8,.018)}
   /* tronchi caduti e rametti */
-  for(let i=0;i<4*D;i++){const[x,z]=ring(2.2,MX*.8),a=R()*3.14,L=.8+R()*1.8,rd=.05+R()*.07,y0=H(x,z);
-    for(let k=0;k<160;k++){const t=(R()-.5)*L,b=R()*6.283,o=Math.cos(b)*rd;
-      A(x+Math.cos(a)*t-Math.sin(a)*o,y0+rd+Math.sin(b)*rd,z+Math.sin(a)*t+Math.cos(a)*o,.25+.06*R(),.18+.05*R(),.11,.028)}}
-  for(let i=0;i<20*D;i++){const[x,z]=ring(1.2,MX*.8),a=R()*6.283,L=.2+R()*.3,y0=H(x,z);
-    for(let k=0;k<14;k++){const t=k/14*L;A(x+Math.cos(a)*t,y0+.02+.03*Math.sin(t*20),z+Math.sin(a)*t,.28,.19,.12,.016)}}
+  for(let i=0;i<4*D;i++){const[x,z]=put(.6,11),a=R()*3.14,L=.8+R()*1.8,rd=.05+R()*.07,y0=H(x,z);
+    for(let k=0;k<200;k++){const t=(R()-.5)*L,b=R()*6.283,o=Math.cos(b)*rd;
+      A(x+Math.cos(a)*t-Math.sin(a)*o,y0+rd+Math.sin(b)*rd,z+Math.sin(a)*t+Math.cos(a)*o,.25+.06*R(),.18+.05*R(),.11,.032)}}
+  for(let i=0;i<20*D;i++){const[x,z]=put(0,11),a=R()*6.283,L=.2+R()*.3,y0=H(x,z);
+    for(let k=0;k<14;k++){const t=k/14*L;A(x+Math.cos(a)*t,y0+.02+.03*Math.sin(t*20),z+Math.sin(a)*t,.28,.19,.12,.02)}}
   const g=new THREE.BufferGeometry();
   g.setAttribute('position',new THREE.Float32BufferAttribute(P,3));
   g.setAttribute('col',new THREE.Float32BufferAttribute(C,3));
   g.setAttribute('sz',new THREE.Float32BufferAttribute(S,1));
   forest=new THREE.Points(g,forestMat);forest.frustumCulled=false;forest.position.set(cx,0,cz);
   forest.visible=skyIdx===1;scene.add(forest);forestDirty=false;
+}
+function newForest(){
+  forestSeed=1+Math.floor(Math.random()*2147483000);forestDirty=true;ping(700,.05);
+  if(skyIdx===1)buildForest();else setSky(1);
 }
 function setSky(i){
   skyIdx=i;skyMat.uniforms.uSt.value=i?0:1;
@@ -354,8 +364,9 @@ const EL=[
   ...[['move','Sposta'],['mat','Materiale'],['del','Cancella']].map(([id,l],i)=>({id,t:'m',tab:1,x:col3[i],y:524,w:176,h:64,l})),
   ...PRESETS.map((q,i)=>({id:'pc'+i,t:'p',tab:2,i,l:q.n,x:col3[i%3],y:138+Math.floor(i/3)*58,w:176,h:50})),
   ...MOVES.map((l,i)=>({id:'mv'+i,t:'v',tab:2,i,l,x:col3[i%3],y:346+Math.floor(i/3)*58,w:176,h:50})),
-  {id:'fl',t:'f',tab:2,x:40,y:534,w:272,h:62,l:''},
-  {id:'sk',t:'k',tab:2,x:328,y:534,w:272,h:62,l:''}
+  {id:'fl',t:'f',tab:2,x:40,y:534,w:176,h:62,l:''},
+  {id:'sk',t:'k',tab:2,x:232,y:534,w:176,h:62,l:''},
+  {id:'nf',t:'n',tab:2,x:424,y:534,w:176,h:62,l:'Nuova foresta'}
 ];
 const vis=()=>EL.filter(e=>e.tab===undefined||e.tab===tab);
 
@@ -398,7 +409,7 @@ function drawPanel(){
       const on=(e.t==='x'&&e.i===matIdx)||(e.t==='v'&&e.i===mvIdx)||(e.t==='f'&&floorOn)||(e.t==='k'&&skyIdx===1)||e.id===mode||e.id==='tab'+tab;
       x.fillStyle=on?(e.id==='del'?'#e0365f':'#4f5fe0'):(hv?'#2c3a8c':'#1d2552');
       x.beginPath();x.roundRect(e.x,e.y,e.w,e.h,18);x.fill();
-      x.fillStyle='#fff';x.font='700 26px system-ui,sans-serif';x.textAlign='center';
+      x.fillStyle='#fff';x.font=(e.t==='f'||e.t==='k'||e.t==='n'?'700 21px':'700 26px')+' system-ui,sans-serif';x.textAlign='center';
       x.fillText(e.t==='f'?'Pavimento: '+(floorOn?'sì':'no'):e.t==='k'?'Cielo: '+(skyIdx?'Foresta':'Stelle'):e.l,e.x+e.w/2,e.y+e.h/2+9);
     }
   }
@@ -420,6 +431,7 @@ function act(e,cp){
   else if(e.t==='v')setMove(e.i);
   else if(id==='fl')toggleFloor();
   else if(id==='sk')setSky(skyIdx?0:1);
+  else if(id==='nf')newForest();
   else if(id==='move'||id==='mat'||id==='del')mode=id;
   else if(id==='nm')setOrbCount(orbs().length-1);
   else if(id==='np')setOrbCount(orbs().length+1);
@@ -470,6 +482,7 @@ $('pcSel').onchange=e=>applyColorPreset(+e.target.value);
 $('mvSel').onchange=e=>setMove(+e.target.value);
 $('floorBtn').onclick=toggleFloor;
 $('skySel').onchange=e=>setSky(+e.target.value);
+$('newBtn').onclick=newForest;
 $('fdSel').onchange=e=>{forestD=+e.target.value;forestDirty=true;if(skyIdx===1)buildForest()};
 
 /* ---------- mani ---------- */
