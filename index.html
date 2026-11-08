@@ -36,6 +36,8 @@ button.sec{background:#1d2552;border:1px solid #2b3366;margin-top:12px;padding:1
   <select id="mvSel"></select>
   <label for="skySel">Cielo / ambiente</label>
   <select id="skySel"><option value="0">Cielo stellato</option><option value="1">Foresta (point cloud)</option></select>
+  <label for="fdSel">Densità foresta</label>
+  <select id="fdSel"><option value="1">Normale</option><option value="2" selected>Alta</option><option value="3">Altissima</option></select>
   <button id="floorBtn" class="sec">Nascondi pavimento</button>
   <p>Guarda la mano sinistra e fai doppio pizzico pollice-medio per aprire o chiudere la palette. Pizzica pollice-indice per afferrare e spostare. Un colpo veloce con l'indice lancia le sfere. Tocca i pulsanti con l'indice destro.</p>
   <p id="msg"></p>
@@ -155,19 +157,24 @@ function applyBounds(rs,repopulate){
 }
 
 /* ---------- foresta point cloud ---------- */
-let forest=null,forestDirty=true,skyIdx=0;
+let forest=null,forestDirty=true,skyIdx=0,forestD=2;
 const FL=Array.from({length:24},()=>new THREE.Vector4()),FC=Array.from({length:24},()=>new THREE.Vector3());
 const forestMat=new THREE.ShaderMaterial({
-  uniforms:{uA:skyMat.uniforms.uA,uL:{value:FL},uLC:{value:FC},uN:{value:0},uF:{value:.035}},
+  uniforms:{uA:skyMat.uniforms.uA,uL:{value:FL},uLC:{value:FC},uN:{value:0},uT:{value:0},uF:{value:.035}},
   transparent:true,
-  vertexShader:`attribute float sz;attribute vec3 col;uniform vec4 uL[24];uniform vec3 uLC[24];uniform float uN;
+  vertexShader:`attribute float sz;attribute vec3 col;uniform vec4 uL[24];uniform vec3 uLC[24];uniform float uN,uT;
 varying vec3 vC;varying float vD;
 void main(){
-  vec4 wp=modelMatrix*vec4(position,1.);vec3 lit=vec3(0.);float g=0.;
-  for(int i=0;i<24;i++){if(float(i)>=uN)break;vec3 d=uL[i].xyz-wp.xyz;float a=uL[i].w/(1.+dot(d,d)*2.5);lit+=uLC[i]*a;g+=a;}
-  vC=col*(vec3(.05,.07,.12)+lit*2.6);
+  vec4 wp=modelMatrix*vec4(position,1.);vec3 lit=vec3(0.),em=vec3(0.),push=vec3(0.);float g=0.;
+  for(int i=0;i<24;i++){if(float(i)>=uN)break;
+    vec3 d=uL[i].xyz-wp.xyz;float q=dot(d,d),a=uL[i].w/(1.+q*1.2);lit+=uLC[i]*a;g+=a;
+    em+=uLC[i]*exp(-q*6.)*uL[i].w;
+    vec3 o=-d/(sqrt(q)+.01);push+=(o+cross(vec3(0.,1.,0.),o)*.8)*exp(-q*2.5)*uL[i].w*.1;}
+  float sw=step(sz,.0125)*min(position.y,.6)*.12+step(.03,sz)*.03;
+  wp.xyz+=push+vec3(sin(uT*1.3+wp.z*1.7+wp.y),0.,cos(uT*1.1+wp.x*1.5+wp.y))*sw;
+  vC=col*(vec3(.05,.07,.12)+lit*4.)+em*.7;
   vec4 mv=viewMatrix*wp;vD=length(mv.xyz);
-  gl_PointSize=clamp(sz*projectionMatrix[1][1]*600.*(1.+min(g,2.)*.6)/vD,1.5,16.);
+  gl_PointSize=clamp(sz*projectionMatrix[1][1]*600.*(1.+min(g,2.)*.9+min(dot(em,vec3(1.)),2.)*.5)/vD,1.5,16.);
   gl_Position=projectionMatrix*mv;}`,
   fragmentShader:`uniform float uA,uF;varying vec3 vC;varying float vD;
 void main(){
@@ -178,56 +185,58 @@ void main(){
 function buildForest(){
   if(forest){scene.remove(forest);forest.geometry.dispose()}
   let sd=7;const R=()=>{sd=(sd*16807)%2147483647;return sd/2147483647};
-  const P=[],C=[],S=[],MX=15,RR=Math.max(RI+1.2,3.4);
+  const D=forestD,P=[],C=[],S=[],MX=15,RR=Math.max(RI+1.2,3.4);
   const A=(x,y,z,r,g,b,z2)=>{P.push(x,y,z);C.push(r**2.2,g**2.2,b**2.2);S.push(z2)};
   const sm=(a,b,x)=>{x=Math.min(1,Math.max(0,(x-a)/(b-a)));return x*x*(3-2*x)};
   const H=(x,z)=>(.35*Math.sin(x*.35)*Math.cos(z*.3)+.15*Math.sin(x*1.1+z*.8))*sm(2,5,Math.hypot(x,z));
   const ring=(a,b)=>{const t=R()*6.283,r=Math.sqrt(a*a+R()*(b*b-a*a));return[Math.cos(t)*r,Math.sin(t)*r]};
   /* terreno */
-  for(let i=0;i<16000;i++){const[x,z]=ring(0,MX),n=R(),b=Math.sin(x*.9+z*1.3)>.55;
+  for(let i=0;i<16000*D;i++){const[x,z]=ring(0,MX),n=R(),b=Math.sin(x*.9+z*1.3)>.55;
     b?A(x,H(x,z),z,.22+.1*n,.15+.07*n,.09,.022):A(x,H(x,z),z,.1+.1*n,.16+.18*n,.05+.04*n,.022)}
+  /* foglie cadute */
+  for(let i=0;i<2500*D;i++){const[x,z]=ring(0,MX*.85),n=R();A(x,H(x,z)+.01,z,.55+.35*n,.25+.25*R(),.05,.02)}
   /* erba */
-  for(let i=0;i<4500;i++){const[x,z]=ring(R()<.3?0:1.2,MX*.8),h=.15+R()*.4,a=R()*6.283,bd=.1+R()*.2,t0=.5+R()*.5,y0=H(x,z);
+  for(let i=0;i<4500*D;i++){const[x,z]=ring(R()<.3?0:1.2,MX*.8),h=.15+R()*.4,a=R()*6.283,bd=.1+R()*.2,t0=.5+R()*.5,y0=H(x,z);
     for(let k=0;k<5;k++){const u=k/4;A(x+Math.cos(a)*bd*u*u*h,y0+u*h,z+Math.sin(a)*bd*u*u*h,.08+.25*u*t0,.25+.4*u*t0,.05+.08*u,.012)}}
   /* cespugli */
-  for(let i=0;i<16;i++){const[x,z]=ring(2.6,MX*.85),s=.4+R()*.5,y0=H(x,z);
-    for(let k=0;k<260;k++){const a=R()*6.283,rr=s*Math.sqrt(R());A(x+Math.cos(a)*rr,y0+.05+Math.sqrt(R())*s*.9,z+Math.sin(a)*rr,.05,.2+.25*R(),.06,.022)}}
+  for(let i=0;i<14*D;i++){const[x,z]=ring(2.6,MX*.85),s=.4+R()*.5,y0=H(x,z);
+    for(let k=0;k<260*D;k++){const a=R()*6.283,rr=s*Math.sqrt(R());A(x+Math.cos(a)*rr,y0+.05+Math.sqrt(R())*s*.9,z+Math.sin(a)*rr,.05,.2+.25*R(),.06,.022)}}
   /* alberi */
-  for(let i=0;i<20;i++){
+  for(let i=0;i<14*D;i++){
     const[x,z]=ring(RR,MX),h=4.5+R()*4.5,r0=.12+R()*.14,y0=H(x,z),lx=(R()-.5)*.6,lz=(R()-.5)*.6,aut=R()<.14;
     const lf=()=>aut?[.75+.2*R(),.35+.25*R(),.06]:[.08+.1*R(),.3+.25*R(),.06+.06*R()];
     const bark=(px,py,pz,a)=>{const d=Math.sin(a*8)>.5?.7:1;A(px,py,pz,(.22+.12*R())*d,(.15+.08*R())*d,(.1+.05*R())*d,.026)};
     const T=y=>[x+lx*y/h*.5,z+lz*y/h*.5];
-    for(let k=0;k<600;k++){const y=R()*h,a=R()*6.283,r=r0*(1-.65*y/h)*(1+.25*Math.sin(y*7+i))*(1+.8*Math.exp(-y*3)),[tx,tz]=T(y);bark(tx+Math.cos(a)*r,y0+y,tz+Math.sin(a)*r,a)}
+    for(let k=0;k<600*D;k++){const y=R()*h,a=R()*6.283,r=r0*(1-.65*y/h)*(1+.25*Math.sin(y*7+i))*(1+.8*Math.exp(-y*3)),[tx,tz]=T(y);bark(tx+Math.cos(a)*r,y0+y,tz+Math.sin(a)*r,a)}
     const cloud=(cx0,cy0,cz0,rad,n)=>{for(let k=0;k<n;k++){const u=Math.acos(2*R()-1),v=R()*6.283,rr=rad*Math.cbrt(R()),c=lf();A(cx0+Math.sin(u)*Math.cos(v)*rr,cy0+Math.cos(u)*rr*.7,cz0+Math.sin(u)*Math.sin(v)*rr,c[0],c[1],c[2],.035)}};
     const nb=5+Math.floor(R()*4);
     for(let b=0;b<nb;b++){
       const sy=h*(.4+.5*R()),ba=R()*6.283,L=1+R()*1.8,[bx,bz]=T(sy);
       for(let k=0;k<45;k++){const t=k/45;bark(bx+Math.cos(ba)*L*t+(R()-.5)*.02,y0+sy+L*.5*t*(1-.3*t),bz+Math.sin(ba)*L*t+(R()-.5)*.02,ba)}
-      cloud(bx+Math.cos(ba)*L,y0+sy+L*.45,bz+Math.sin(ba)*L,.6+R()*.5,170)}
-    const[tx,tz]=T(h);cloud(tx,y0+h,tz,1.3,260)}
+      cloud(bx+Math.cos(ba)*L,y0+sy+L*.45,bz+Math.sin(ba)*L,.6+R()*.5,170*D)}
+    const[tx,tz]=T(h);cloud(tx,y0+h,tz,1.3,260*D)}
   /* rocce */
-  for(let i=0;i<14;i++){const[x,z]=ring(1.8,MX*.85),s=.2+R()*R()*.9,y0=H(x,z),sy=.45+R()*.35,ph=R()*9;
-    for(let k=0;k<380;k++){const u=Math.acos(2*R()-1),v=R()*6.283,rd=s*(1+.25*Math.sin(u*3+ph)*Math.cos(v*2+ph)+.08*(R()-.5)),yy=Math.cos(u)*rd*sy;
+  for(let i=0;i<10*D;i++){const[x,z]=ring(1.8,MX*.85),s=.2+R()*R()*.9,y0=H(x,z),sy=.45+R()*.35,ph=R()*9;
+    for(let k=0;k<380*D;k++){const u=Math.acos(2*R()-1),v=R()*6.283,rd=s*(1+.25*Math.sin(u*3+ph)*Math.cos(v*2+ph)+.08*(R()-.5)),yy=Math.cos(u)*rd*sy;
       if(yy<-.02*s)continue;
       const g=.28+.18*R(),mo=sm(.5,.9,yy/(s*sy+1e-3))*(.5+R()*.5);
       A(x+Math.sin(u)*Math.cos(v)*rd,y0+yy,z+Math.sin(u)*Math.sin(v)*rd,g*(1-mo*.5),g*(1-mo*.1)+.04*mo,g*(1-mo*.55),.026)}}
   /* fiori */
   const FCL=[[.95,.95,.9],[1,.85,.15],[.95,.35,.55],[.6,.4,.95],[.95,.25,.2],[.4,.6,1]];
-  for(let i=0;i<14;i++){const[px,pz]=ring(1.5,MX*.7),f=FCL[i%6];
+  for(let i=0;i<7*D;i++){const[px,pz]=ring(1.5,MX*.7),f=FCL[i%6];
     for(let j=0;j<14;j++){const a=R()*6.283,rr=R()*.9,x=px+Math.cos(a)*rr,z=pz+Math.sin(a)*rr,y0=H(x,z),h=.18+R()*.28;
       for(let k=0;k<4;k++)A(x,y0+h*k/3,z,.1,.4,.1,.014);
       for(let k=0;k<14;k++){const q=k/14*6.283,rp=.04+.015*(k%2);A(x+Math.cos(q)*rp,y0+h+.005*(k%2),z+Math.sin(q)*rp,f[0],f[1],f[2],.022)}
       A(x,y0+h+.01,z,1,.85,.2,.02)}}
   /* funghi */
-  for(let i=0;i<18;i++){const[x,z]=ring(1.6,MX*.7),y0=H(x,z),s=.04+R()*.05,m=i%2;
+  for(let i=0;i<9*D;i++){const[x,z]=ring(1.6,MX*.7),y0=H(x,z),s=.04+R()*.05,m=i%2;
     for(let k=0;k<18;k++){const a=R()*6.283,u=Math.acos(R()),rc=s*1.5;A(x+Math.cos(a)*Math.sin(u)*rc,y0+s*2+Math.cos(u)*rc*.6,z+Math.sin(a)*Math.sin(u)*rc,.8,.2+.5*m,.15+.5*m,.016)}
     for(let k=0;k<5;k++)A(x,y0+s*.4*k,z,.9,.88,.8,.014)}
   /* tronchi caduti e rametti */
-  for(let i=0;i<7;i++){const[x,z]=ring(2.2,MX*.8),a=R()*3.14,L=.8+R()*1.8,rd=.05+R()*.07,y0=H(x,z);
+  for(let i=0;i<4*D;i++){const[x,z]=ring(2.2,MX*.8),a=R()*3.14,L=.8+R()*1.8,rd=.05+R()*.07,y0=H(x,z);
     for(let k=0;k<160;k++){const t=(R()-.5)*L,b=R()*6.283,o=Math.cos(b)*rd;
       A(x+Math.cos(a)*t-Math.sin(a)*o,y0+rd+Math.sin(b)*rd,z+Math.sin(a)*t+Math.cos(a)*o,.25+.06*R(),.18+.05*R(),.11,.028)}}
-  for(let i=0;i<40;i++){const[x,z]=ring(1.2,MX*.8),a=R()*6.283,L=.2+R()*.3,y0=H(x,z);
+  for(let i=0;i<20*D;i++){const[x,z]=ring(1.2,MX*.8),a=R()*6.283,L=.2+R()*.3,y0=H(x,z);
     for(let k=0;k<14;k++){const t=k/14*L;A(x+Math.cos(a)*t,y0+.02+.03*Math.sin(t*20),z+Math.sin(a)*t,.28,.19,.12,.016)}}
   const g=new THREE.BufferGeometry();
   g.setAttribute('position',new THREE.Float32BufferAttribute(P,3));
@@ -461,6 +470,7 @@ $('pcSel').onchange=e=>applyColorPreset(+e.target.value);
 $('mvSel').onchange=e=>setMove(+e.target.value);
 $('floorBtn').onclick=toggleFloor;
 $('skySel').onchange=e=>setSky(+e.target.value);
+$('fdSel').onchange=e=>{forestD=+e.target.value;forestDirty=true;if(skyIdx===1)buildForest()};
 
 /* ---------- mani ---------- */
 const hands=[0,1].map(i=>{
@@ -605,7 +615,7 @@ renderer.setAnimationLoop(()=>{
       l.intensity=glow*3*k}
   });
   for(;li<NL;li++)lights[li].intensity=0;
-  forestMat.uniforms.uN.value=n;forestMat.uniforms.uF.value=.035+fog*.3;
+  forestMat.uniforms.uN.value=n;forestMat.uniforms.uT.value=t;forestMat.uniforms.uF.value=.035+fog*.3;
 
   updateEnv();
   renderer.render(scene,camera);
