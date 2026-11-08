@@ -38,6 +38,8 @@ button.sec{background:#1d2552;border:1px solid #2b3366;margin-top:12px;padding:1
   <select id="skySel"><option value="0">Cielo stellato</option><option value="1">Foresta (point cloud)</option></select>
   <label for="fdSel">Densità foresta</label>
   <select id="fdSel"><option value="1">Normale</option><option value="2" selected>Alta</option><option value="3">Altissima</option><option value="4">Massima</option></select>
+  <label for="vqSel">Qualità render VR</label>
+  <select id="vqSel"><option value="0">Alta (nitida)</option><option value="1">Bilanciata</option><option value="2">Veloce</option></select>
   <button id="newBtn" class="sec">Nuova foresta</button>
   <button id="floorBtn" class="sec">Nascondi pavimento</button>
   <p>Guarda la mano sinistra e fai doppio pizzico pollice-medio per aprire o chiudere la palette. Pizzica pollice-indice per afferrare e spostare. Un colpo veloce con l'indice lancia le sfere. Tocca i pulsanti con l'indice destro.</p>
@@ -60,8 +62,8 @@ const scene=new THREE.Scene();
 scene.fog=new THREE.FogExp2(0x141a3a,0);
 const camera=new THREE.PerspectiveCamera(70,innerWidth/innerHeight,.02,100);
 scene.add(new THREE.HemisphereLight(0xbfd2ff,0x202040,.3));
-const NL=4;
-const lights=[...Array(NL)].map(()=>{const l=new THREE.PointLight(0xffffff,0,4,2);scene.add(l);return l});
+const NL=6;
+const lights=[...Array(NL)].map(()=>{const l=new THREE.PointLight(0xffffff,0,8,2);scene.add(l);return l});
 
 let vr=.4,glow=1,fog=0,isAR=false,mode='move',colorIdx=4,matIdx=1,tab=0;
 let cpIdx=0,mvIdx=0,floorOn=true;
@@ -82,10 +84,10 @@ const PRESETS=[
   {n:'Foresta',c:['#0b8f3c','#2ee66a','#9be564','#d4e157','#00a896','#7bdcb5']},
   {n:'Ghiaccio',c:['#e0f7ff','#a8e6ff','#6fc7ff','#b9a8ff','#ffffff','#8ad1e8']}
 ];
-const MOVES=['Libero','Orbita','Onda','Spirale','Respiro','Infinito','Caos','Ferme'];
+const MOVES=['Libero','Orbita','Onda','Spirale','Respiro','Infinito','Caos','Ferme','Fisse'];
 const TG=new THREE.Vector3();
 function moveTarget(i,n,t,out){
-  const a=i/n*Math.PI*2,R=RI*.6,TP=Math.PI*2;
+  const a=i/n*Math.PI*2,R=RI*.85+.6,TP=Math.PI*2;
   let ang,r,u;
   switch(mvIdx){
     case 1:ang=a+t*.45;out.set(cx+Math.cos(ang)*R,1.1+.25*Math.sin(i*2),cz+Math.sin(ang)*R);break;
@@ -139,6 +141,7 @@ function inside(x,z){
   }
   return c;
 }
+function edgeD(x,z){let m=1e9;for(let i=0;i<B.length;i++)m=Math.min(m,segD(x,z,B[i],B[(i+1)%B.length]));return m}
 function buildFloor(pts){
   if(floorGroup){scene.remove(floorGroup);floorGroup.traverse(o=>o.geometry&&o.geometry.dispose())}
   B=pts;cx=0;cz=0;
@@ -168,12 +171,12 @@ varying vec3 vC;varying float vD;
 void main(){
   vec4 wp=modelMatrix*vec4(position,1.);vec3 lit=vec3(0.),em=vec3(0.),push=vec3(0.);float g=0.;
   for(int i=0;i<24;i++){if(float(i)>=uN)break;
-    vec3 d=uL[i].xyz-wp.xyz;float q=dot(d,d),a=uL[i].w/(1.+q*1.2);lit+=uLC[i]*a;g+=a;
-    em+=uLC[i]*exp(-q*6.)*uL[i].w;
-    vec3 o=-d/(sqrt(q)+.01);push+=(o+cross(vec3(0.,1.,0.),o)*.8)*exp(-q*2.5)*uL[i].w*.1;}
+    vec3 d=uL[i].xyz-wp.xyz;float q=dot(d,d),a=uL[i].w/(1.+q*.35);lit+=uLC[i]*a;g+=a;
+    em+=uLC[i]*exp(-q*2.2)*uL[i].w;
+    vec3 o=-d/(sqrt(q)+.01);push+=(o+cross(vec3(0.,1.,0.),o)*.8)*exp(-q*.9)*uL[i].w*.12;}
   float sw=step(sz,.017)*min(position.y,.6)*.12+step(.036,sz)*.03;
   wp.xyz+=push+vec3(sin(uT*1.3+wp.z*1.7+wp.y),0.,cos(uT*1.1+wp.x*1.5+wp.y))*sw;
-  vC=col*(vec3(.05,.07,.12)+lit*4.)+em*.7;
+  vC=col*(vec3(.05,.07,.12)+lit*3.2)+em*.7;
   vec4 mv=viewMatrix*wp;vD=length(mv.xyz);
   gl_PointSize=clamp(sz*projectionMatrix[1][1]*600.*(1.+min(g,2.)*.9+min(dot(em,vec3(1.)),2.)*.5)/vD,1.5,16.);
   gl_Position=projectionMatrix*mv;}`,
@@ -495,7 +498,7 @@ const hands=[0,1].map(i=>{
 const J=(h,n)=>{const j=h.joints&&h.joints[n];return j&&j.visible!==false?j.getWorldPosition(new THREE.Vector3()):null};
 
 function grab(s,mid){
-  let best=null,bd=.12;
+  let best=null,bd=.2;
   for(const o of items){const d=mid.distanceTo(o.position)-o.userData.r*.6;if(d<bd){bd=d;best=o}}
   if(!best)return;
   const u=best.userData;
@@ -598,34 +601,35 @@ renderer.setAnimationLoop(()=>{
   const os=orbs(),n=os.length,step=Math.max(1,Math.floor(n/NL));let li=0;
   os.forEach((o,idx)=>{
     const u=o.userData;u.cool-=dt;u.ph+=dt;
-    if(!u.held){
+    if(mvIdx===8)u.v.set(0,0,0);
+    if(!u.held&&mvIdx!==8){
       if(mvIdx===0||mvIdx===6){
-        const am=mvIdx===6?10:1;
+        const am=mvIdx===6?12:2.5;
         u.v.x+=Math.sin(u.ph*.7+u.note)*.05*am*dt;
         u.v.y+=Math.cos(u.ph*.9+u.note)*.04*am*dt;
         u.v.z+=Math.sin(u.ph*.5+u.note*2)*.05*am*dt;
       }
       for(const f of fingers){
-        if(f.sp>.5&&u.cool<=0&&o.position.distanceTo(f.p)<.1){
-          u.v.copy(f.vel).multiplyScalar(.9).clampLength(0,4);
+        if(f.sp>.5&&u.cool<=0&&o.position.distanceTo(f.p)<.16){
+          u.v.copy(f.vel).multiplyScalar(1.2).clampLength(0,6);
           ping(NOTES[u.note]);u.cool=.3;
         }
       }
       u.v.multiplyScalar(Math.exp(-(mvIdx===7?3:.9)*dt));
       o.position.addScaledVector(u.v,dt);
       if(mvIdx>=1&&mvIdx<=5)o.position.lerp(moveTarget(idx,n,t,TG),1-Math.exp(-3*dt));
-      const p=o.position;p.y=Math.min(2.6,Math.max(.15,p.y));
-      if(!inside(p.x,p.z)){p.x+=(cx-p.x)*.05;p.z+=(cz-p.z)*.05;u.v.multiplyScalar(.5)}
+      const p=o.position;p.y=Math.min(3.4,Math.max(.1,p.y));
+      if(!inside(p.x,p.z)&&edgeD(p.x,p.z)>1.8){p.x+=(cx-p.x)*.05;p.z+=(cz-p.z)*.05;u.v.multiplyScalar(.5)}
     }
     FL[idx].set(o.position.x,o.position.y,o.position.z,glow*1.8);FC[idx].set(u.c.r,u.c.g,u.c.b);
     const pulse=1+.12*Math.sin(t*3+u.ph);
-    u.sp.scale.setScalar(.4*pulse*(.5+glow*.5)*(1+fog*1.8));
+    u.sp.scale.setScalar(.55*pulse*(.5+glow*.5)*(1+fog*1.8));
     u.sp.material.opacity=Math.min(1,.2+.55*glow)*(1-.25*fog)*Math.min(1,Math.max(0,(o.position.distanceTo(camPos)-.15)/.45));
     if(idx%step===0&&li<NL){const l=lights[li++];l.position.copy(o.position);l.color.copy(u.c);
       let dm=9;
       for(const it of items){if(it.userData.kind==='orb')continue;const d=Math.max(o.position.distanceTo(it.position)-it.userData.r,.02);if(d<dm)dm=d}
       const k=Math.min(1,(dm/.9)*(dm/.9));
-      l.intensity=glow*3*k}
+      l.intensity=glow*3*k*(1+.2*Math.sin(t*1.7+u.ph))}
   });
   for(;li<NL;li++)lights[li].intensity=0;
   forestMat.uniforms.uN.value=n;forestMat.uniforms.uT.value=t;forestMat.uniforms.uF.value=.035+fog*.3;
@@ -647,8 +651,9 @@ $('go').onclick=async()=>{
     let rt='local-floor';
     try{const r=await s.requestReferenceSpace('bounded-floor');if(r.boundsGeometry&&r.boundsGeometry.length>=3)rt='bounded-floor'}catch(e){}
     renderer.xr.setReferenceSpaceType(rt);
+    renderer.xr.setFramebufferScaleFactor([1.2,1,1][+$('vqSel').value]);
     await renderer.xr.setSession(s);
-    renderer.xr.setFoveation(1);
+    renderer.xr.setFoveation([0,.3,1][+$('vqSel').value]);
     const rs=renderer.xr.getReferenceSpace();
     applyBounds(rs,true);
     if(rs)rs.onreset=()=>applyBounds(renderer.xr.getReferenceSpace(),false);
