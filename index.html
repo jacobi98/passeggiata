@@ -36,6 +36,8 @@ button.sec{background:#1d2552;border:1px solid #2b3366;margin-top:12px;padding:1
   <select id="mvSel"></select>
   <label for="skySel">Cielo / ambiente</label>
   <select id="skySel"><option value="0">Cielo stellato</option><option value="1">Foresta (point cloud)</option></select>
+  <label for="ampR">Ampiezza movimento luci</label>
+  <input id="ampR" type="range" min="30" max="200" value="100">
   <label for="fdSel">Densità foresta</label>
   <select id="fdSel"><option value="1">Normale</option><option value="2" selected>Alta</option><option value="3">Altissima</option><option value="4">Massima</option></select>
   <label for="vqSel">Qualità render VR</label>
@@ -66,7 +68,7 @@ const NL=6;
 const lights=[...Array(NL)].map(()=>{const l=new THREE.PointLight(0xffffff,0,8,2);scene.add(l);return l});
 
 let vr=.4,glow=1,fog=0,isAR=false,mode='move',colorIdx=4,matIdx=1,tab=0;
-let cpIdx=0,mvIdx=0,floorOn=true;
+let cpIdx=0,mvIdx=0,floorOn=true,amp=1;
 let open=false,ps=0,snap=false,dirty=true,hover=null,latch=false,fc=0;
 const COL=['#ff3d71','#ff9f1c','#ffe66d','#2ee6a6','#3da5ff','#b06bff'];
 const MATL=['Gesso','Metallo','Vetro','Dicroica','Plastica','Satinato'];
@@ -87,14 +89,14 @@ const PRESETS=[
 const MOVES=['Libero','Orbita','Onda','Spirale','Respiro','Infinito','Caos','Ferme','Fisse'];
 const TG=new THREE.Vector3();
 function moveTarget(i,n,t,out){
-  const a=i/n*Math.PI*2,R=RI*.85+.6,TP=Math.PI*2;
+  const a=i/n*Math.PI*2,R=(RI*1.2+2.6)*amp,TP=Math.PI*2;
   let ang,r,u;
   switch(mvIdx){
-    case 1:ang=a+t*.45;out.set(cx+Math.cos(ang)*R,1.1+.25*Math.sin(i*2),cz+Math.sin(ang)*R);break;
-    case 2:ang=a+t*.1;out.set(cx+Math.cos(ang)*R,1.2+.5*Math.sin(t*1.6+a*3),cz+Math.sin(ang)*R);break;
-    case 3:{const f=(i/n+t*.04)%1,q=1-Math.abs(2*f-1);ang=q*TP*3+t*.5;r=R*(.25+.75*q);out.set(cx+Math.cos(ang)*r,.3+q*1.8,cz+Math.sin(ang)*r);break}
-    case 4:r=R*(.3+.6*(.5+.5*Math.sin(t*1.1)));ang=a+t*.1;out.set(cx+Math.cos(ang)*r,1.15+.2*Math.sin(i*2+t),cz+Math.sin(ang)*r);break;
-    case 5:u=t*.5+a;out.set(cx+R*1.2*Math.sin(u),1.1+.3*Math.sin(u*2+i),cz+R*1.2*Math.sin(u)*Math.cos(u));break;
+    case 1:ang=a+t*.45;out.set(cx+Math.cos(ang)*R,1.3+.6*Math.sin(i*2+t*.5),cz+Math.sin(ang)*R);break;
+    case 2:ang=a+t*.1;out.set(cx+Math.cos(ang)*R,1.4+.9*Math.sin(t*1.6+a*3),cz+Math.sin(ang)*R);break;
+    case 3:{const f=(i/n+t*.04)%1,q=1-Math.abs(2*f-1);ang=q*TP*3+t*.5;r=R*(.25+.75*q);out.set(cx+Math.cos(ang)*r,.3+q*3,cz+Math.sin(ang)*r);break}
+    case 4:r=R*(.3+.6*(.5+.5*Math.sin(t*1.1)));ang=a+t*.1;out.set(cx+Math.cos(ang)*r,1.3+.5*Math.sin(i*2+t),cz+Math.sin(ang)*r);break;
+    case 5:u=t*.5+a;out.set(cx+R*1.2*Math.sin(u),1.4+.8*Math.sin(u*2+i),cz+R*1.2*Math.sin(u)*Math.cos(u));break;
   }
   return out;
 }
@@ -196,23 +198,33 @@ function buildForest(){
   const sm=(a,b,x)=>{x=Math.min(1,Math.max(0,(x-a)/(b-a)));return x*x*(3-2*x)};
   /* distanza con segno dal pavimento dell'utente (negativa dentro) */
   const sdf=(x,z)=>{let m=1e9;for(let i=0;i<B.length;i++)m=Math.min(m,segD(x+cx,z+cz,B[i],B[(i+1)%B.length]));return inside(x+cx,z+cz)?-m:m};
-  const H=(x,z)=>(.35*Math.sin(x*.35)*Math.cos(z*.3)+.15*Math.sin(x*1.1+z*.8))*sm(-.2,2.5,sdf(x,z));
+  const H=(x,z)=>(.35*Math.sin(x*.35)*Math.cos(z*.3)+.15*Math.sin(x*1.1+z*.8))*sm(0,1.6,sdf(x,z));
   const put=(a,b,k)=>{for(let t=0;t<80;t++){const an=R()*6.283,r=W*Math.sqrt(R()),x=Math.cos(an)*r,z=Math.sin(an)*r,d=sdf(x,z);
     if(d>=a&&d<=b&&(!k||R()<.2+.8*Math.exp(-Math.max(d,0)/k)))return[x,z]}return[W*2,W*2]};
+  /* perimetro: punti casuali lungo il bordo disegnato, spostati verso l'esterno */
+  const nB=B.length,per=B.reduce((m,q,i)=>m+Math.hypot(B[(i+1)%nB][0]-q[0],B[(i+1)%nB][1]-q[1]),0);
+  const edgePt=o=>{let r=R()*per;
+    for(let i=0;i<nB;i++){const a=B[i],b=B[(i+1)%nB],l=Math.hypot(b[0]-a[0],b[1]-a[1])||1e-6;
+      if(r<=l||i===nB-1){const t=Math.min(1,r/l),px=a[0]+(b[0]-a[0])*t,pz=a[1]+(b[1]-a[1])*t;let nx=(b[1]-a[1])/l,nz=-(b[0]-a[0])/l;
+        if(inside(px+nx*.05,pz+nz*.05)){nx=-nx;nz=-nz}
+        const k=o*R();return[px+nx*k-cx,pz+nz*k-cz]}
+      r-=l}return[0,0]};
   /* terreno (piu' fitto vicino al pavimento) */
   for(let i=0;i<14000*D*AR;i++){const[x,z]=put(-1e9,1e9,7),n=R(),b=Math.sin(x*.9+z*1.3)>.55;
     b?A(x,H(x,z),z,.22+.1*n,.15+.07*n,.09,.03):A(x,H(x,z),z,.1+.1*n,.16+.18*n,.05+.04*n,.03)}
   /* foglie cadute */
-  for(let i=0;i<3500*D*AR;i++){const[x,z]=put(-.3,1e9,7),n=R();A(x,H(x,z)+.01,z,.55+.35*n,.25+.25*R(),.05,.028)}
+  for(let i=0;i<3500*D*AR;i++){const[x,z]=put(-.05,1e9,7),n=R();A(x,H(x,z)+.01,z,.55+.35*n,.25+.25*R(),.05,.028)}
   /* erba */
-  for(let i=0;i<5000*D;i++){const[x,z]=put(-.5,13,5),h=.15+R()*.4,a=R()*6.283,bd=.1+R()*.2,t0=.5+R()*.5,y0=H(x,z);
-    for(let k=0;k<5;k++){const u=k/4;A(x+Math.cos(a)*bd*u*u*h,y0+u*h,z+Math.sin(a)*bd*u*u*h,.08+.25*u*t0,.25+.4*u*t0,.05+.08*u,.016)}}
+  const blade=(x,z,hs)=>{const h=(.15+R()*.4)*hs,a=R()*6.283,bd=.1+R()*.2,t0=.5+R()*.5,y0=H(x,z);
+    for(let k=0;k<5;k++){const u=k/4;A(x+Math.cos(a)*bd*u*u*h,y0+u*h,z+Math.sin(a)*bd*u*u*h,.08+.25*u*t0,.25+.4*u*t0,.05+.08*u,.016)}};
+  for(let i=0;i<5000*D;i++){const[x,z]=put(-.15,13,5);blade(x,z,1)}
+  for(let i=0;i<per*45*D;i++){const[x,z]=edgePt(.6);blade(x,z,1.15)}
   /* cespugli */
-  for(let i=0;i<14*D;i++){const[x,z]=put(.8,12),s=.4+R()*.5,y0=H(x,z);
+  for(let i=0;i<14*D;i++){const[x,z]=put(.5,12),s=.4+R()*.5,y0=H(x,z);
     for(let k=0;k<260*D;k++){const a=R()*6.283,rr=s*Math.sqrt(R());A(x+Math.cos(a)*rr,y0+.05+Math.sqrt(R())*s*.9,z+Math.sin(a)*rr,.05,.2+.25*R(),.06,.03)}}
   /* alberi */
   for(let i=0;i<14*D;i++){
-    const[x,z]=put(1,13),h=4.5+R()*4.5,r0=.12+R()*.14,y0=H(x,z),lx=(R()-.5)*.6,lz=(R()-.5)*.6,aut=R()<.14;
+    const[x,z]=put(.7,13),h=4.5+R()*4.5,r0=.12+R()*.14,y0=H(x,z),lx=(R()-.5)*.6,lz=(R()-.5)*.6,aut=R()<.14;
     const lf=()=>aut?[.75+.2*R(),.35+.25*R(),.06]:[.08+.1*R(),.3+.25*R(),.06+.06*R()];
     const bark=(px,py,pz,a)=>{const d=Math.sin(a*8)>.5?.7:1;A(px,py,pz,(.22+.12*R())*d,(.15+.08*R())*d,(.1+.05*R())*d,.03)};
     const T=y=>[x+lx*y/h*.5,z+lz*y/h*.5];
@@ -225,24 +237,31 @@ function buildForest(){
       cloud(bx+Math.cos(ba)*L,y0+sy+L*.45,bz+Math.sin(ba)*L,.6+R()*.5,170*D)}
     const[tx,tz]=T(h);cloud(tx,y0+h,tz,1.3,260*D)}
   /* rocce */
-  for(let i=0;i<10*D;i++){const[x,z]=put(.5,12),s=.2+R()*R()*.9,y0=H(x,z),sy=.45+R()*.35,ph=R()*9;
+  for(let i=0;i<10*D;i++){const[x,z]=put(.25,12),s=.2+R()*R()*.9,y0=H(x,z),sy=.45+R()*.35,ph=R()*9;
     for(let k=0;k<380*D;k++){const u=Math.acos(2*R()-1),v=R()*6.283,rd=s*(1+.25*Math.sin(u*3+ph)*Math.cos(v*2+ph)+.08*(R()-.5)),yy=Math.cos(u)*rd*sy;
       if(yy<-.02*s)continue;
       const g=.28+.18*R(),mo=sm(.5,.9,yy/(s*sy+1e-3))*(.5+R()*.5);
       A(x+Math.sin(u)*Math.cos(v)*rd,y0+yy,z+Math.sin(u)*Math.sin(v)*rd,g*(1-mo*.5),g*(1-mo*.1)+.04*mo,g*(1-mo*.55),.03)}}
   /* fiori */
   const FCL=[[.95,.95,.9],[1,.85,.15],[.95,.35,.55],[.6,.4,.95],[.95,.25,.2],[.4,.6,1]];
-  for(let i=0;i<7*D;i++){const[px,pz]=put(.4,11,8),f=FCL[i%6];
+  for(let i=0;i<7*D;i++){const[px,pz]=put(.2,11,8),f=FCL[i%6];
     for(let j=0;j<22;j++){const a=R()*6.283,rr=R()*.9,x=px+Math.cos(a)*rr,z=pz+Math.sin(a)*rr,y0=H(x,z),h=.18+R()*.28;
       for(let k=0;k<4;k++)A(x,y0+h*k/3,z,.1,.4,.1,.018);
       for(let k=0;k<14;k++){const q=k/14*6.283,rp=.04+.015*(k%2);A(x+Math.cos(q)*rp,y0+h+.005*(k%2),z+Math.sin(q)*rp,f[0],f[1],f[2],.026)}
       A(x,y0+h+.01,z,1,.85,.2,.024)}}
+  /* bordo: sassolini e fiori lungo il perimetro */
+  for(let i=0;i<per*1.2;i++){const[x,z]=edgePt(.5),sr=.05+R()*.1,y0=H(x,z);
+    for(let k=0;k<50;k++){const u=Math.acos(R()),v=R()*6.283,g=.3+.2*R();A(x+Math.sin(u)*Math.cos(v)*sr,y0+Math.cos(u)*sr*.6,z+Math.sin(u)*Math.sin(v)*sr,g,g,g*.9,.03)}}
+  for(let i=0;i<per*1.5;i++){const[x,z]=edgePt(.7),y0=H(x,z),h=.15+R()*.2,f=FCL[i%6];
+    for(let k=0;k<4;k++)A(x,y0+h*k/3,z,.1,.4,.1,.018);
+    for(let k=0;k<10;k++){const q=k/10*6.283,rp=.04+.015*(k%2);A(x+Math.cos(q)*rp,y0+h+.005*(k%2),z+Math.sin(q)*rp,f[0],f[1],f[2],.026)}
+    A(x,y0+h+.01,z,1,.85,.2,.024)}
   /* funghi */
-  for(let i=0;i<9*D;i++){const[x,z]=put(.3,10),y0=H(x,z),s=.04+R()*.05,m=i%2;
+  for(let i=0;i<9*D;i++){const[x,z]=put(.15,10),y0=H(x,z),s=.04+R()*.05,m=i%2;
     for(let k=0;k<18;k++){const a=R()*6.283,u=Math.acos(R()),rc=s*1.5;A(x+Math.cos(a)*Math.sin(u)*rc,y0+s*2+Math.cos(u)*rc*.6,z+Math.sin(a)*Math.sin(u)*rc,.8,.2+.5*m,.15+.5*m,.02)}
     for(let k=0;k<5;k++)A(x,y0+s*.4*k,z,.9,.88,.8,.018)}
   /* tronchi caduti e rametti */
-  for(let i=0;i<4*D;i++){const[x,z]=put(.6,11),a=R()*3.14,L=.8+R()*1.8,rd=.05+R()*.07,y0=H(x,z);
+  for(let i=0;i<4*D;i++){const[x,z]=put(.4,11),a=R()*3.14,L=.8+R()*1.8,rd=.05+R()*.07,y0=H(x,z);
     for(let k=0;k<200;k++){const t=(R()-.5)*L,b=R()*6.283,o=Math.cos(b)*rd;
       A(x+Math.cos(a)*t-Math.sin(a)*o,y0+rd+Math.sin(b)*rd,z+Math.sin(a)*t+Math.cos(a)*o,.25+.06*R(),.18+.05*R(),.11,.032)}}
   for(let i=0;i<20*D;i++){const[x,z]=put(0,11),a=R()*6.283,L=.2+R()*.3,y0=H(x,z);
@@ -486,6 +505,7 @@ $('mvSel').onchange=e=>setMove(+e.target.value);
 $('floorBtn').onclick=toggleFloor;
 $('skySel').onchange=e=>setSky(+e.target.value);
 $('newBtn').onclick=newForest;
+$('ampR').oninput=e=>{amp=e.target.value/100};
 $('fdSel').onchange=e=>{forestD=+e.target.value;forestDirty=true;if(skyIdx===1)buildForest()};
 
 /* ---------- mani ---------- */
@@ -608,6 +628,10 @@ renderer.setAnimationLoop(()=>{
         u.v.x+=Math.sin(u.ph*.7+u.note)*.05*am*dt;
         u.v.y+=Math.cos(u.ph*.9+u.note)*.04*am*dt;
         u.v.z+=Math.sin(u.ph*.5+u.note*2)*.05*am*dt;
+        if(mvIdx===0){const A0=(RI+3.5)*amp;
+          u.v.x+=(cx+Math.cos(u.ph*.17+u.note*2)*A0-o.position.x)*.35*dt;
+          u.v.y+=(1.5+1.2*Math.sin(u.ph*.23+u.note)-o.position.y)*.35*dt;
+          u.v.z+=(cz+Math.sin(u.ph*.13+u.note*3)*A0-o.position.z)*.35*dt}
       }
       for(const f of fingers){
         if(f.sp>.5&&u.cool<=0&&o.position.distanceTo(f.p)<.16){
@@ -618,8 +642,8 @@ renderer.setAnimationLoop(()=>{
       u.v.multiplyScalar(Math.exp(-(mvIdx===7?3:.9)*dt));
       o.position.addScaledVector(u.v,dt);
       if(mvIdx>=1&&mvIdx<=5)o.position.lerp(moveTarget(idx,n,t,TG),1-Math.exp(-3*dt));
-      const p=o.position;p.y=Math.min(3.4,Math.max(.1,p.y));
-      if(!inside(p.x,p.z)&&edgeD(p.x,p.z)>1.8){p.x+=(cx-p.x)*.05;p.z+=(cz-p.z)*.05;u.v.multiplyScalar(.5)}
+      const p=o.position;p.y=Math.min(4.6,Math.max(.1,p.y));
+      if(!inside(p.x,p.z)&&edgeD(p.x,p.z)>6*amp+2){p.x+=(cx-p.x)*.05;p.z+=(cz-p.z)*.05;u.v.multiplyScalar(.5)}
     }
     FL[idx].set(o.position.x,o.position.y,o.position.z,glow*1.8);FC[idx].set(u.c.r,u.c.g,u.c.b);
     const pulse=1+.12*Math.sin(t*3+u.ph);
